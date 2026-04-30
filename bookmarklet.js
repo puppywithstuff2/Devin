@@ -26,68 +26,70 @@
     const header = el.querySelector(":scope > div") || el;
     header.style.cursor = "grab";
     header.style.userSelect = "none";
+    header.style.touchAction = "none";
+    el.style.touchAction = "none";
     let dragging = false, moved = false, offsetX = 0, offsetY = 0, startX = 0, startY = 0;
+    let activePointerId = null;
+    let transformCleared = false;
     const origBg = header.style.background;
-    const origTouchAction = el.style.touchAction || "";
     const threshold = options.threshold || 6;
 
     function shouldIgnoreStart(target) {
       return !!target.closest("button, input, textarea, [contenteditable], #chatMessages");
     }
+    function clearCenterTransform() {
+      if (transformCleared) return;
+      const t = el.style.transform || "";
+      if (t && t.includes("translate")) {
+        const rect = el.getBoundingClientRect();
+        el.style.transform = "none";
+        el.style.left = rect.left + "px";
+        el.style.top = rect.top + "px";
+      }
+      transformCleared = true;
+    }
     function start(e) {
-      const isTouch = e.type && e.type.startsWith && e.type.startsWith("touch");
-      const clientX = isTouch ? (e.touches && e.touches[0] && e.touches[0].clientX) : e.clientX;
-      const clientY = isTouch ? (e.touches && e.touches[0] && e.touches[0].clientY) : e.clientY;
       if (shouldIgnoreStart(e.target)) return;
+      if (activePointerId !== null) return;
+      clearCenterTransform();
+      activePointerId = e.pointerId;
       dragging = false; moved = false;
-      startX = clientX; startY = clientY;
-      offsetX = clientX - el.getBoundingClientRect().left;
-      offsetY = clientY - el.getBoundingClientRect().top;
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", end);
-      document.addEventListener("touchmove", move, { passive: false });
-      document.addEventListener("touchend", end);
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", end);
-      if (e.preventDefault) e.preventDefault();
+      startX = e.clientX; startY = e.clientY;
+      offsetX = e.clientX - el.getBoundingClientRect().left;
+      offsetY = e.clientY - el.getBoundingClientRect().top;
+      header.setPointerCapture(e.pointerId);
+      e.preventDefault();
     }
     function move(e) {
-      const isTouch = e.type && e.type.startsWith && e.type.startsWith("touch");
-      const clientX = isTouch ? (e.touches && e.touches[0] && e.touches[0].clientX) : e.clientX;
-      const clientY = isTouch ? (e.touches && e.touches[0] && e.touches[0].clientY) : e.clientY;
-      const dx = clientX - startX, dy = clientY - startY;
+      if (e.pointerId !== activePointerId) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging) {
         if (Math.hypot(dx, dy) < threshold) return;
         dragging = true;
         header.style.cursor = "grabbing";
         header.style.background = "rgba(0,0,0,0.18)";
         el.style.userSelect = "none";
-        el.style.touchAction = "none";
       }
-      const left = Math.max(0, Math.min(window.innerWidth - el.offsetWidth, clientX - offsetX));
-      const top = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, clientY - offsetY));
+      const left = Math.max(0, Math.min(window.innerWidth - el.offsetWidth, e.clientX - offsetX));
+      const top = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, e.clientY - offsetY));
       el.style.left = left + "px";
       el.style.top = top + "px";
-      if (isTouch && e.preventDefault) e.preventDefault();
+      e.preventDefault();
       moved = true;
     }
-    function end() {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", end);
-      document.removeEventListener("touchmove", move);
-      document.removeEventListener("touchend", end);
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", end);
+    function end(e) {
+      if (e.pointerId !== activePointerId) return;
+      activePointerId = null;
       if (!dragging && !moved) el.click();
       dragging = false;
       header.style.cursor = "grab";
       header.style.background = origBg || "";
       el.style.userSelect = "";
-      el.style.touchAction = origTouchAction;
     }
     header.addEventListener("pointerdown", start);
-    header.addEventListener("mousedown", start);
-    header.addEventListener("touchstart", start, { passive: false });
+    header.addEventListener("pointermove", move);
+    header.addEventListener("pointerup", end);
+    header.addEventListener("pointercancel", end);
   }
 
   function registerEl(el) {
@@ -1144,50 +1146,63 @@
     const addRoomBtn = modal.querySelector("#addRoomBtn");
     const addAndSwitchBtn = modal.querySelector("#addAndSwitchBtn");
 
+    const passwordOverlay = document.createElement("div");
+    Object.assign(passwordOverlay.style, {
+      position: "absolute", inset: "0",
+      background: "rgba(12,13,15,0.95)", zIndex: "42",
+      display: "none", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: "24px", borderRadius: "16px",
+      backdropFilter: "blur(8px)",
+      color: "#fff",
+    });
     const passwordModal = document.createElement("div");
     Object.assign(passwordModal.style, {
-      background: "#111214", padding: "12px", borderRadius: "10px",
-      display: "none", flexDirection: "column", gap: "8px",
-      color: "#fff", border: "1px solid rgba(255,255,255,0.03)"
+      background: "#111214", padding: "20px", borderRadius: "14px",
+      display: "flex", flexDirection: "column", gap: "10px",
+      color: "#fff", border: "1px solid rgba(255,255,255,0.06)",
+      width: "min(90%, 300px)",
+      boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
     });
     passwordModal.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <strong id="pwdModalTitle">Enter password</strong>
-        <button id="pwdModalClose" style="background:#444; border:none; padding:6px 8px; border-radius:8px; cursor:pointer; color:#fff;">X</button>
+        <strong id="pwdModalTitle" style="font-size:15px; color:#e6eefc;">Enter password</strong>
+        <button id="pwdModalClose" style="background:rgba(255,255,255,0.06); border:none; padding:6px 10px; border-radius:8px; cursor:pointer; color:#9fb0e6; font-size:14px;">✕</button>
       </div>
-      <div style="display:flex; flex-direction:column; gap:6px;">
-        <input id="pwdInput" type="password" placeholder="Password" style="padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); outline:none; font-size:14px; background:#0c0d0f; color:#fff;">
-        <label style="font-size:13px; display:flex; gap:8px; align-items:center;"><input id="pwdRemember" type="checkbox"> Save to account</label>
-        <div style="display:flex; gap:8px;">
-          <button id="pwdSubmit" style="flex:1; padding:8px; border-radius:8px; border:none; background:#2f855a; color:white; cursor:pointer;">Submit</button>
-          <button id="pwdCancel" style="flex:1; padding:8px; border-radius:8px; border:none; background:#555; color:white; cursor:pointer;">Cancel</button>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <input id="pwdInput" type="password" placeholder="Room password" class="dole-input" style="padding:12px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.06); outline:none; font-size:14px; background:rgba(0,0,0,0.3); color:#fff; font-family:inherit;">
+        <label style="font-size:13px; display:flex; gap:8px; align-items:center; color:#9fb0e6;"><input id="pwdRemember" type="checkbox"> Save to account</label>
+        <div style="display:flex; gap:8px; margin-top:4px;">
+          <button id="pwdSubmit" class="dole-btn" style="flex:1; padding:12px; border-radius:10px; border:none; background:linear-gradient(135deg,#2f855a,#276749); color:white; cursor:pointer; font-weight:600; font-size:14px;">Submit</button>
+          <button id="pwdCancel" class="dole-btn" style="flex:1; padding:12px; border-radius:10px; border:none; background:rgba(255,255,255,0.08); color:#aaa; cursor:pointer; font-weight:600; font-size:14px;">Cancel</button>
         </div>
       </div>
     `;
-    modal.appendChild(passwordModal);
+    passwordOverlay.appendChild(passwordModal);
+    box.appendChild(passwordOverlay);
 
     function showPasswordModal(title) {
-      passwordModal.style.display = "flex";
-      modal.querySelector("#pwdModalTitle").textContent = title || "Enter password";
-      modal.querySelector("#pwdInput").value = "";
-      modal.querySelector("#pwdRemember").checked = true;
-      modal.querySelector("#pwdInput").focus();
+      passwordOverlay.style.display = "flex";
+      passwordModal.querySelector("#pwdModalTitle").textContent = title || "Enter password";
+      passwordModal.querySelector("#pwdInput").value = "";
+      passwordModal.querySelector("#pwdRemember").checked = true;
+      setTimeout(() => { try { passwordModal.querySelector("#pwdInput").focus(); } catch (e) {} }, 50);
     }
-    function hidePasswordModal() { passwordModal.style.display = "none"; }
+    function hidePasswordModal() { passwordOverlay.style.display = "none"; }
 
     function promptPasswordForRoom(room, purpose = "access") {
       return new Promise((resolve) => {
         showPasswordModal(purpose === "claim" ? `Set password to claim "${room}"` : (purpose === "update-claim" ? `New password for "${room}"` : `Password for "${room}"`));
         const submit = () => {
-          const pwd = modal.querySelector("#pwdInput").value;
-          const remember = !!modal.querySelector("#pwdRemember").checked;
+          const pwd = passwordModal.querySelector("#pwdInput").value;
+          const remember = !!passwordModal.querySelector("#pwdRemember").checked;
           hidePasswordModal();
           resolve({ password: pwd, remember });
         };
         const cancel = () => { hidePasswordModal(); resolve(null); };
-        const closeBtn2 = modal.querySelector("#pwdModalClose");
-        const submitBtn = modal.querySelector("#pwdSubmit");
-        const cancelBtn = modal.querySelector("#pwdCancel");
+        const closeBtn2 = passwordModal.querySelector("#pwdModalClose");
+        const submitBtn = passwordModal.querySelector("#pwdSubmit");
+        const cancelBtn = passwordModal.querySelector("#pwdCancel");
         function cleanup() {
           submitBtn.removeEventListener("click", submit);
           cancelBtn.removeEventListener("click", cancel);
@@ -1843,8 +1858,10 @@
 
       async function slowPoll() {
         if (!wsActive || wsPaused) return;
+        const roomAtPollStart = currentRoom;
         try {
           const data = await ctrl.getMessages();
+          if (!wsActive || wsPaused || currentRoom !== roomAtPollStart) return;
           if (!data || !Array.isArray(data.messages)) return;
           const newMessages = data.messages;
           if (newMessages.length !== lastCount) {
@@ -1906,6 +1923,7 @@
           case "call-group-invite":
             if (callState) return;
             isGroupCall = true;
+            callState = "incoming";
             callPeer = msg._from;
             activeGroupCallMembers = new Set(msg.members || [msg._from]);
             showIncomingCallBanner(`${msg._from} started a group call`);
@@ -1986,9 +2004,17 @@
 
       function rejectCall() {
         if (callState !== "incoming") return;
-        sendWs({ type: "call-reject", to: callPeer });
-        hideIncomingCallBanner();
-        callState = null; callPeer = null; pendingOffer = null;
+        if (isGroupCall) {
+          sendWs({ type: "call-group-leave" });
+          hideIncomingCallBanner();
+          callState = null; callPeer = null; isGroupCall = false;
+          activeGroupCallMembers.clear();
+          renderUserList();
+        } else {
+          sendWs({ type: "call-reject", to: callPeer });
+          hideIncomingCallBanner();
+          callState = null; callPeer = null; pendingOffer = null;
+        }
       }
 
       function endCall(reason = "ended") {
@@ -2031,12 +2057,16 @@
       async function acceptGroupCall() {
         hideIncomingCallBanner();
         try {
+          const existingMembers = [...activeGroupCallMembers].filter(m => m !== username);
           isGroupCall = true; callState = "active-group";
           _localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
           showGroupCallWindow();
           minifyChat();
           activeGroupCallMembers.add(username);
           sendWs({ type: "call-group-join" }); // everyone in the call hears this and connects
+          for (const member of existingMembers) {
+            await handleNewGroupMember(member);
+          }
         } catch (e) {
           alert("Could not join group call: " + (e && e.message ? e.message : "check camera/mic"));
           callState = null; isGroupCall = false;
